@@ -142,5 +142,59 @@ project/
 
 - 默认主程序只处理灰度图，所以颜色会丢失。
 - Huffman 树目前保存在 `EncodedImage` 对象中，没有单独序列化进 `.bin` 文件。
-- 当前 A 部分只负责信源编码，没有实现 BSC/BEC 信道模型和信道编码。
+- A 部分只负责信源编码；B 分支已新增 BSC/BEC 信道模型与 `none`/重复码/Hamming(7,4) 信道编码。
 - 如果后续要独立保存并跨程序读取 bitstream，需要额外设计文件格式，把 Huffman 表、量化表和图像尺寸一起保存。
+
+## 8. B 分工：信道编码与 BSC/BEC 信道模拟
+
+本分支新增 `src/channel_coding.py`，用于承接 A 同学输出的压缩 `bitstream`，完成“信道编码 -> 信道传输 -> 信道译码 -> 交回信源解码器”的流程。
+
+### 已实现的信道模型
+
+- **BSC（二进制对称信道）**：每个编码后比特以概率 `p` 独立翻转。
+- **BEC（二进制擦除信道）**：每个编码后比特以概率 `p` 独立变成擦除符号 `-1`。
+- 支持设置随机种子 `--seed`，便于复现实验结果。
+
+### 已实现的信道编码
+
+- `none`：不加保护，直接传输，用作 baseline。
+- `repetition`：奇数重复码，默认重复 3 次，通过多数投票恢复；BEC 下会忽略擦除位。
+- `hamming`：Hamming(7,4) 线性分组码，默认推荐；可纠正每个 7-bit 码字中的 1 个 BSC 翻转错误，也可恢复每个码字中的 1 个 BEC 擦除。
+
+### B 分工命令示例
+
+对一张图像运行信源编码，并在 BSC/BEC 上测试 Hamming(7,4)：
+
+```powershell
+python main.py --image graph\graph_bar_chart.png --quality 50 --output output_channel --simulate-channel --channel both --channel-code hamming --error-probs 0.01,0.05,0.1
+```
+
+只测试 BSC，并使用 3 重重复码：
+
+```powershell
+python main.py --image graph\graph_bar_chart.png --quality 50 --output output_channel_rep --simulate-channel --channel bsc --channel-code repetition --repetition-factor 3 --error-probs 0.01,0.05,0.1
+```
+
+运行后，每个图像输出目录会额外生成：
+
+```text
+channel_results_hamming.csv       # BER、冗余率、纠错数、不可纠错块数、运行时间、恢复 PSNR
+channel_bsc_hamming_p0p01.png     # 经过指定信道后恢复的图像
+channel_bec_hamming_p0p01.png
+...
+```
+
+### B 分工测试
+
+```powershell
+python tests\test_channel_coding.py
+python -m compileall main.py src tests
+```
+
+`tests/test_channel_coding.py` 会检查：
+
+- bytes 与 bit vector 的转换是否无损。
+- Hamming(7,4) 是否能纠正单个 BSC 翻转错误。
+- Hamming(7,4) 是否能恢复单个 BEC 擦除。
+- BSC/BEC 随机仿真是否可通过 seed 复现。
+- `p=0` 时完整 bitstream 是否可无误传输并交回 A 同学的信源解码器。
